@@ -267,6 +267,34 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(sum(path.endswith("sources.tar.xz") for path in self.requests), 1)
         self.cli("toolchain", "remove", "1.0.0", success=False)
 
+    def test_custom_home_proxies_work_without_an_environment_override(self):
+        environment = dict(self.environment)
+        environment.pop("SCOOP_HOME")
+        environment["USERPROFILE" if WINDOWS else "HOME"] = str(self.root / "user")
+        self.cli(
+            "--home",
+            str(self.home),
+            "toolchain",
+            "install",
+            "1.0.0",
+            "--skip-docs",
+            environment=environment,
+        )
+        result = self.proxy("child", environment=environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "1.0.0")
+        result = subprocess.run(
+            [str(self.home / "bin" / ("scoop-install" + EXE)), "show"],
+            env=environment,
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("1.0.0", result.stdout)
+        self.assertFalse((self.root / "user" / ".scoop").exists())
+
     def test_project_environment_override_arguments_child_and_exit_status(self):
         self.install()
         self.install("2.0.0")

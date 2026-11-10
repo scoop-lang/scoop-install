@@ -37,6 +37,14 @@ pub fn home() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("SCOOP_HOME") {
         return Ok(path.into());
     }
+    let executable = std::env::current_exe()?;
+    if let Some(bin) = executable.parent()
+        && bin.file_name().is_some_and(|name| name == "bin")
+        && let Some(root) = bin.parent()
+        && root.join("settings.toml").is_file()
+    {
+        return Ok(root.to_owned());
+    }
     std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
         .map(|path| PathBuf::from(path).join(".scoop"))
         .context("Set SCOOP_HOME or your user home directory")
