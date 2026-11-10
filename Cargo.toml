@@ -1,0 +1,23 @@
+[package]
+name = "scoop-install"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Scoop toolchain and target installer"
+repository = "https://github.com/scoop-lang/scoop-install"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive", "env"] }
+liblzma = { version = "0.4.9", default-features = false, features = ["static"] }
+serde = { version = "1.0.229", features = ["derive"] }
+sha2 = "0.11.1"
+tar = "0.4.46"
+tempfile = "3.27.0"
+toml = "1.2.1"
+ureq = "3.5.1"
+url = "2.5.8"
+
+[profile.release]
+lto = "thin"
+strip = true
