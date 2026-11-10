@@ -2,6 +2,16 @@
 
 Scoop 工具链、target 与可选组件的独立安装和版本管理程序。源码仓库为 [scoop-lang/scoop-install](https://github.com/scoop-lang/scoop-install)，不依赖 Scoop 编译器、LLVM 或 Python 运行。
 
+已发布的安装器 `0.1.0` 可从 R2 下载：
+
+- [Apple Silicon macOS](https://release.scoop-lang.org/installers/0.1.0/scoop-install-aarch64-apple-darwin)
+- [x86-64 GNU/Linux](https://release.scoop-lang.org/installers/0.1.0/scoop-install-x86_64-unknown-linux-gnu)
+- [x64 Windows](https://release.scoop-lang.org/installers/0.1.0/scoop-install-x86_64-pc-windows-gnullvm.exe)
+
+[SHA256SUMS](https://release.scoop-lang.org/installers/0.1.0/SHA256SUMS) 提供校验值。将文件命名为 `scoop-install`（Windows 为 `scoop-install.exe`），macOS／Linux 执行 `chmod +x scoop-install`。第一次可用 `./scoop-install toolchain install latest` 安装；之后将管理目录的 `bin` 加入 PATH。安装器版本与 Scoop 工具链版本独立管理。
+
+以下目标选择示例适用于 macOS：
+
 ```sh
 scoop-install toolchain install latest
 scoop-install toolchain install 0.0.0-dev.20261111 --target x86_64-apple-darwin
