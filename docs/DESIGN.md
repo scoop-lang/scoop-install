@@ -43,6 +43,8 @@ Windows 三个 target 共用一个宿主 bin，宿主 triple 不替代默认 tar
 
 使用独立 Rust 程序实现选择、HTTP 下载、归档解包、安装状态及命令代理。安装程序自身不依赖 Scoop、LLVM 或 LLDB 的 Python。优先使用成熟库实现 HTTP、TOML、tar／XZ、文件锁和临时目录，依赖选型在实现前检查维护状态。
 
+XZ 库静态链接；Windows 的 MSVC C runtime 也静态链接，bootstrap 可直接启动安装器，不要求用户事先安装 Visual C++ Redistributable。
+
 官网 `install.sh` 和 `install.ps1` 只检测宿主、下载相应的 `scoop-install` 并传递参数。安装管理逻辑由同一份 Rust 代码处理。
 
 ```text
