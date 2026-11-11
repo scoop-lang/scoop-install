@@ -1,0 +1,84 @@
+name: Build and test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-arm64
+            host: aarch64-apple-darwin
+            suffix: ''
+          - runner: ubuntu-24.04
+            host: x86_64-unknown-linux-gnu
+            suffix: ''
+          - runner: windows-2025
+            host: x86_64-pc-windows-gnullvm
+            suffix: '.exe'
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - uses: Swatinem/rust-cache@v2
+      - name: Prepare temporary directory
+        run: |
+          mkdir -p tmp
+          echo "TMPDIR=$GITHUB_WORKSPACE/tmp" >> "$GITHUB_ENV"
+          echo "TMP=$GITHUB_WORKSPACE/tmp" >> "$GITHUB_ENV"
+          echo "TEMP=$GITHUB_WORKSPACE/tmp" >> "$GITHUB_ENV"
+      - name: Format and lint
+        run: |
+          cargo fmt --all --check
+          cargo clippy --locked --all-targets -- -D warnings
+          python -m pip install ruff==0.16.10
+          ruff format --check tests tools
+          ruff check tests tools
+      - name: Test real component downloads and command proxies
+        run: |
+          cargo build --locked
+          python -m unittest discover -s tests
+      - name: Build standalone installer
+        run: |
+          cargo build --locked --release
+          mkdir -p dist
+          cp "target/release/scoop-install${{ matrix.suffix }}" "dist/scoop-install-${{ matrix.host }}${{ matrix.suffix }}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: scoop-install-${{ matrix.host }}
+          path: dist/*
+          compression-level: 0
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: scoop-install-*
+          merge-multiple: true
+          path: dist
+      - name: Publish installer binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes

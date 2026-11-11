@@ -1,16 +1,16 @@
 # scoop-install 安装与版本管理设计
 
-日期：2026-11-11。状态：设计，尚未实现安装程序。
+日期：2026-11-11。状态：安装、组件操作、更新、代理、项目版本选择、缓存和编辑器接入已实现；平台验证范围与发行产物见 [Scoop 实施记录](https://github.com/scoop-lang/scoop/blob/codex/scoop-install/docs/distribution/IMPLEMENTATION.md)。
 
 ## 1. 已确定的范围
 
 安装程序命名为 **`scoop-install`**，Windows 可执行文件名为 `scoop-install.exe`。源码在独立仓库维护，不放进 Scoop 编译器的 Cargo workspace 或 `tooling/`。
 
-本机仓库是 `/Volumes/Data/home/chenxu/repos/scoop-install-src`；相邻的 `scoop-install` 已有一份解压后的工具链，继续保留。目录的 `-src` 后缀不改变程序名或 Cargo package 的拟定名称。
+公开仓库为 `scoop-lang/scoop-install`。本机检出目录使用 `scoop-install-src`，保留相邻的既有工具链目录。程序和 Cargo package 名称均为 `scoop-install`。
 
 程序负责安装、查询、增删和选择 Scoop 工具链版本及 target，支持按目标追加 GUI 组件。Scoop 仓库负责编译器、系统库、上游依赖的维护构建、组件组装和发布索引；官网仓库提供 shell／PowerShell bootstrap。
 
-源码分为两种全局组件：`sources` 包含 Scoop 自己的 Cone 及胶水，默认安装以支持 LSP 源码导航；`vendor` 包含上游源码及构建补丁，按需安装。包内容和生产侧下载目录的详细合同见 [Scoop 打包设计](../../scoop/docs/distribution/PACKAGING-DESIGN.md)。
+源码分为两种全局组件：`sources` 包含 Scoop 自己的 Cone 及胶水，默认安装以支持 LSP 源码导航；`vendor` 包含上游源码及构建补丁，按需安装。包内容和生产侧下载目录的详细合同见 [Scoop 打包设计](https://github.com/scoop-lang/scoop/blob/codex/scoop-install/docs/distribution/PACKAGING-DESIGN.md)。
 
 ## 2. 版本、宿主、target 与组件
 
@@ -43,6 +43,8 @@ Windows 三个 target 共用一个宿主 bin，宿主 triple 不替代默认 tar
 
 使用独立 Rust 程序实现选择、HTTP 下载、归档解包、安装状态及命令代理。安装程序自身不依赖 Scoop、LLVM 或 LLDB 的 Python。优先使用成熟库实现 HTTP、TOML、tar／XZ、文件锁和临时目录，依赖选型在实现前检查维护状态。
 
+XZ 库静态链接；Windows 的 MSVC C runtime 也静态链接，bootstrap 可直接启动安装器，不要求用户事先安装 Visual C++ Redistributable。
+
 官网 `install.sh` 和 `install.ps1` 只检测宿主、下载相应的 `scoop-install` 并传递参数。安装管理逻辑由同一份 Rust 代码处理。
 
 ```text
@@ -74,23 +76,25 @@ Windows 三个 target 共用一个宿主 bin，宿主 triple 不替代默认 tar
 
 未选的资源目录可以不存在。顶层 bin 中除安装程序外是工具代理；toolchain 内保留发行归档的现有布局。每套工具链的安装状态记录宿主、精确版本、已装组件和正常卸载所需的文件归属，与编译器使用的发行说明文件分开。
 
+安装根优先采用 `--home`／`SCOOP_HOME`；已安装在 `<home>/bin` 的管理器和代理按相邻的 `settings.toml` 定位该 home，其余入口默认使用用户目录下的 `.scoop`。因此自定义安装目录加入 PATH 后可以直接使用，无需在每个终端再次设置环境变量。
+
 代理启动所选版本中的实际命令。当前 Scoop 会根据真实执行文件定位相邻 sysroot 和配套工具，这条路径可以沿用。命令保留参数、cwd、标准输入输出、退出码与信号行为，并将同一次工具链选择传给子进程。用户显式传入的 `--sysroot`／`SCOOP_SYSROOT` 继续按已有规则覆盖资源位置。
 
 Windows 使用原生 `.exe` 代理，主驱动保持 `sco.exe`。LLVM／LLDB 的公开工具也必须随同一选择切换。
 
 ## 4. 命令与项目选择
 
-以下是拟议命令，不代表已实现：
+安装与组件命令：
 
 ```sh
-scoop-install toolchain install 0.0.0-dev.20261110
-scoop-install toolchain install 0.0.0-dev.20261110 --target x86_64-apple-darwin
-scoop-install default 0.0.0-dev.20261110
-scoop-install run 0.0.0-dev.20261110 scoop --version
+scoop-install toolchain install 0.0.0-dev.20261111
+scoop-install toolchain install 0.0.0-dev.20261111 --target x86_64-apple-darwin
+scoop-install default 0.0.0-dev.20261111
+scoop-install run 0.0.0-dev.20261111 scoop --version
 scoop-install toolchain list
-scoop-install toolchain remove 0.0.0-dev.20261110
-scoop-install target add x86_64-apple-darwin --toolchain 0.0.0-dev.20261110
-scoop-install target remove x86_64-apple-darwin --toolchain 0.0.0-dev.20261110
+scoop-install toolchain remove 0.0.0-dev.20261111
+scoop-install target add x86_64-apple-darwin --toolchain 0.0.0-dev.20261111
+scoop-install target remove x86_64-apple-darwin --toolchain 0.0.0-dev.20261111
 scoop-install target list --installed
 scoop-install component add gui --target aarch64-apple-darwin
 scoop-install component add vendor
@@ -100,9 +104,9 @@ scoop-install show
 
 目标相关示例适用于 macOS 宿主。`gui` 的增删明确绑定 target；全局 sources／vendor 属于所选工具链。删除当前默认版本或删除其他已装组件必需的组件时，给出明确错误及需要先完成的选择操作，不留下无法解析的默认配置。
 
-首版先支持 default／run。项目级版本选择随后采用以下优先级：
+default／run 和项目级版本选择采用以下优先级：
 
-1. 命令行 `+<version>`，例如 `scoop +0.0.0-dev.20261110 build`。
+1. 命令行 `+<version>`，例如 `scoop +0.0.0-dev.20261111 build`。
 2. `SCOOP_TOOLCHAIN` 环境变量。
 3. 向上查找最近的 `scoop-toolchain.toml`。
 4. 全局 default。
@@ -136,13 +140,13 @@ manifest 只表达当前组件的明确关系；同一安装使用同一精确 r
 
 post-install 只生成离线 API 文档，接收实际已安装目标列表；只装非默认目标时必须显式传 target。提供跳过文档的安装选项，文档失败可以单独重试。未完成必需步骤时不切换默认版本。
 
-旧的平铺安装迁入版本目录时，保留 PM 包缓存和用户自定义外部命令，不能直接沿用旧脚本删除顶层发行目录的方式。安装程序自身的 Windows 替换与自更新另行实现，不作为首版组件选择的前置。
+首次采用版本目录时，保留顶层 `packages/`、`commands/` 和其他用户文件；只将本次 manifest 的组件登记为新版本，公开命令切为代理，不沿用旧脚本删除顶层发行目录的方式。共享自定义命令继续由 Scoop 的外部命令查找消费。安装程序自身的 Windows 替换与自更新另行实现，不作为首版组件选择的前置。
 
 ## 7. 编译与编辑器集成
 
-现行发行说明要求升级后清理项目构建缓存。仅创建版本目录无法承诺透明切换；第二阶段应将所选工具链的明确发行身份接入 Scoop 现有缓存配置或命名空间，覆盖默认及显式共享缓存。身份来自发行／调用配置，更新判断不扫描或哈希工具文件。接入前继续要求切换版本后 clean，并明确这个限制。
+代理将所选工具链的发行、版本、源码 revision 和宿主组合为 `SCOOP_TOOLCHAIN_ID`，传给同一次调用的子进程。Scoop 使用该值的摘要划分缓存目录；直接调用工具链内的命令时使用内嵌发行身份。默认缓存、`SCOOP_CACHE_DIR` 和显式 `--cache-dir` 都保留各版本的独立结果，切回原版本可直接复用，无需先 clean。身份来自发行／调用配置，更新判断不扫描或哈希工具文件。
 
-VS Code 已优先查找 `~/.scoop/bin` 的工具，可以接代理入口。项目固定版本时需要按工作区目录启动配套 LSP、编译器与 debugger；版本改变后重启语言服务。多根工作区不同版本的选择在同一阶段明确。
+VS Code 从 `SCOOP_HOME/bin` 或默认安装目录查找代理，并以各工作区目录为 cwd 启动配套 LSP、编译器与 debugger。每个工作区有独立语言服务；祖先目录的 `scoop-toolchain.toml` 或安装目录的 `settings.toml` 改变后重启相应服务，多根工作区可以分别选择版本。外部命令先查所选 toolchain 的 `commands/`，再查安装 home 的共享 `commands/`。
 
 安装 target 只提供该发行的资源。Darwin SDK、MSVC Build Tools／Windows SDK、Linux libc／开发环境、musl 工具和 GUI 系统运行库仍遵守 Scoop 的现有平台合同。首版采用已发行宿主／target 矩阵，不附带扩展跨 OS SDK 分发。
 
@@ -158,15 +162,15 @@ VS Code 已优先查找 `~/.scoop/bin` 的工具，可以接代理入口。项�
 
 1. Scoop 侧先修订发行相关规范，完成源码拆包和下载目录；产出明确的组件 manifest。
 2. 本仓库实现独立安装程序，完成版本目录、default／run、target／GUI／vendor 增删与查询，并验证三宿主实际安装。
-3. 两仓库接通项目固定版本、缓存隔离和编辑器工具选择；随后再提供可省略 sources 的 minimal、自更新或本地工具链 link。
+3. 两仓库接通项目固定版本、缓存隔离和编辑器工具选择，完成所选版本的编译、语言服务与调试闭环。可省略 sources 的 minimal、安装器自更新和本地工具链 link 不属于本次实现范围。
 
 验收覆盖所选归档请求、MinGW native 自动补齐、sources 的 LSP 导航而不请求 vendor、按版本追加目标、更新保留选择、失败不激活半成品、卸载文件归属、三宿主路径和链接语义、代理的真实版本与退出行为。项目选择阶段增加编译缓存和 LSP 版本一致性覆盖。
 
-测试保持原源码、工具和产物存在，以真实调用与输出确认复用；不靠删除或隐藏这些输入证明隔离。原始日志与安装产物放在仓库外，文档只保留结果摘要。
+测试保持原源码、工具和产物存在，以真实调用与输出确认复用；不靠删除或隐藏这些输入证明隔离。原始日志与安装产物不提交到 Git；本轮本机临时文件统一放在仓库 `tmp/`，文档只保留结果摘要。
 
 ## 9. 依据
 
-- [Scoop 发行调查](../../scoop/docs/distribution/INSTALLER-RESEARCH.md)：2026-11-10 的真实包结构和体积。
-- [Scoop 打包设计](../../scoop/docs/distribution/PACKAGING-DESIGN.md)：源码组件与 `--download-dir`。
-- [Scoop 实现规范](../../scoop/docs/specs/SCOOP-IMPL-SPEC.md)：发行、工具路径、缓存和 LSP 合同；实施前同步对应规范。
+- [Scoop 发行调查](https://github.com/scoop-lang/scoop/blob/codex/scoop-install/docs/distribution/INSTALLER-RESEARCH.md)：2026-11-10 的真实包结构和体积。
+- [Scoop 打包设计](https://github.com/scoop-lang/scoop/blob/codex/scoop-install/docs/distribution/PACKAGING-DESIGN.md)：源码组件与 `--download-dir`。
+- [Scoop 实现规范](https://github.com/scoop-lang/scoop/blob/codex/scoop-install/docs/specs/SCOOP-IMPL-SPEC.md)：发行、工具路径、缓存和 LSP 合同。
 - rustup 官方文档：[Toolchains](https://rust-lang.github.io/rustup/concepts/toolchains.html)、[Components](https://rust-lang.github.io/rustup/concepts/components.html)、[Overrides](https://rust-lang.github.io/rustup/overrides.html)。
