@@ -24,6 +24,7 @@ pub struct Host {
 pub struct Target {
     pub base: String,
     pub gui: Option<String>,
+    pub profiling: Option<String>,
     pub native: Option<String>,
     #[serde(default)]
     pub requirements: BTreeMap<String, String>,
@@ -80,6 +81,7 @@ impl Manifest {
             valid_name(name)?;
             references.insert(&target.base);
             references.extend(target.gui.as_deref());
+            references.extend(target.profiling.as_deref());
             references.extend(target.native.as_deref());
         }
         for component in references {
@@ -114,13 +116,27 @@ impl Manifest {
         Ok(&self.targets[name])
     }
 
-    pub fn target_components(&self, host: &str, name: &str, gui: bool) -> Result<BTreeSet<String>> {
+    pub fn target_components(
+        &self,
+        host: &str,
+        name: &str,
+        gui: bool,
+        profiling: bool,
+    ) -> Result<BTreeSet<String>> {
         let target = self.target(host, name)?;
         let mut components = BTreeSet::from([target.base.clone()]);
         components.extend(target.native.clone());
         if gui {
             components.insert(target.gui.clone().ok_or_else(|| {
                 anyhow::anyhow!("Target {name} has no GUI component in {}", self.version)
+            })?);
+        }
+        if profiling {
+            components.insert(target.profiling.clone().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Target {name} has no profiling component in {}",
+                    self.version
+                )
             })?);
         }
         Ok(components)
@@ -130,15 +146,20 @@ impl Manifest {
         match name {
             "sources" if target.is_none() => Ok(self.sources.clone()),
             "vendor" if target.is_none() => Ok(self.vendor.clone()),
-            "gui" => {
-                let name =
-                    target.ok_or_else(|| anyhow::anyhow!("GUI requires --target <target>"))?;
-                self.target(host, name)?
-                    .gui
+            "gui" | "profiling" => {
+                let target_name =
+                    target.ok_or_else(|| anyhow::anyhow!("{name} requires --target <target>"))?;
+                let selected = self.target(host, target_name)?;
+                let component = if name == "gui" {
+                    &selected.gui
+                } else {
+                    &selected.profiling
+                };
+                component
                     .clone()
-                    .ok_or_else(|| anyhow::anyhow!("Target {name} has no GUI component"))
+                    .ok_or_else(|| anyhow::anyhow!("Target {target_name} has no {name} component"))
             }
-            _ => bail!("Expected sources, vendor, or gui with --target"),
+            _ => bail!("Expected sources, vendor, or gui/profiling with --target"),
         }
     }
 }
@@ -179,8 +200,14 @@ impl State {
                         target.base
                     );
                 }
-            } else if let Some(gui) = &target.gui {
-                ensure!(!components.contains(gui), "{gui} requires {}", target.base);
+            } else {
+                for component in [&target.gui, &target.profiling].into_iter().flatten() {
+                    ensure!(
+                        !components.contains(component),
+                        "{component} requires {}",
+                        target.base
+                    );
+                }
             }
         }
         Ok(())

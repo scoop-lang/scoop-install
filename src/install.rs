@@ -160,10 +160,11 @@ impl Store {
                 &self.host,
                 target,
                 components.iter().any(|c| c == "gui"),
+                components.iter().any(|c| c == "profiling"),
             )?);
         }
         for component in components {
-            if component != "gui" {
+            if component != "gui" && component != "profiling" {
                 desired.insert(state.manifest.component(&self.host, component, None)?);
             }
         }
@@ -212,7 +213,15 @@ impl Store {
                 .gui
                 .as_ref()
                 .is_some_and(|gui| old.components.contains(gui));
-            desired.extend(state.manifest.target_components(&self.host, target, gui)?);
+            let profiling = old.manifest.targets[target]
+                .profiling
+                .as_ref()
+                .is_some_and(|component| old.components.contains(component));
+            desired.extend(
+                state
+                    .manifest
+                    .target_components(&self.host, target, gui, profiling)?,
+            );
         }
         let changed = self.apply(&mut state, desired)?;
         self.proxies(&root)?;
@@ -324,9 +333,10 @@ impl Store {
             let selection = state.manifest.target(&self.host, target)?;
             let mut components = state
                 .manifest
-                .target_components(&self.host, target, false)?;
+                .target_components(&self.host, target, false, false)?;
             if !add {
                 components.extend(selection.gui.clone());
+                components.extend(selection.profiling.clone());
             }
             if add {
                 desired.extend(components);
@@ -362,7 +372,10 @@ impl Store {
             desired.remove(&component);
         }
         let changed = self.apply(&mut state, desired)?;
-        if changed && let Some(target) = target {
+        if changed
+            && name == "gui"
+            && let Some(target) = target
+        {
             self.clear_docs(&state, &[target.into()])?;
             if !skip_docs {
                 self.try_docs(&state, &[target.into()]);

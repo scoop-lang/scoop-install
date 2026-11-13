@@ -135,7 +135,7 @@ class InstallerTests(unittest.TestCase):
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         }
 
-    def release(self, version, *, gui=True):
+    def release(self, version, *, gui=True, profiling=True):
         tool = self.tool.read_bytes()
         files = {
             "VERSION": (version + "\n").encode(),
@@ -187,6 +187,19 @@ class InstallerTests(unittest.TestCase):
                     version, name, {f"lib/{target}/scoop.window.slib": b"prebuilt GUI"}
                 )
                 lines.append(f'gui = "{name}"')
+            if profiling:
+                name = "profiling-" + target
+                archives[name] = self.archive(
+                    version,
+                    name,
+                    {
+                        f"lib/{target}/profiling/instrumented/scoop.core.slib": b"instrumented full",
+                        f"lib/{target}/profiling/instrumented/scoop.core.slib.profile.json": b"map",
+                        f"lib/{target}/profiling/release/scoop.core.slib": b"release full",
+                        f"lib/{target}/profiling/runtime/profile.a": b"target profile runtime",
+                    },
+                )
+                lines.append(f'profiling = "{name}"')
             if "mingw" in target:
                 name = "native-" + target
                 archives[name] = self.archive(
@@ -232,6 +245,7 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse((self.installed() / "lib" / DEFAULT).exists())
         self.assertTrue((self.installed() / "lib" / ALTERNATE / "scoop.core.slib").is_file())
         self.assertFalse(any("vendor.tar.xz" in path or "gui-" in path for path in self.requests))
+        self.assertFalse(any("profiling-" in path for path in self.requests))
         self.assertFalse((self.installed() / "vendor").exists())
         requests = list(self.requests)
         self.install("1.0.0", "--target", ALTERNATE)
@@ -255,6 +269,7 @@ class InstallerTests(unittest.TestCase):
         )
         self.cli("target", "add", ALTERNATE, "--skip-docs")
         self.cli("component", "add", "gui", "--target", ALTERNATE, "--skip-docs")
+        self.cli("component", "add", "profiling", "--target", ALTERNATE)
         self.cli("component", "add", "vendor", "--skip-docs")
         custom = self.installed() / "lib" / ALTERNATE / "custom.txt"
         custom.write_text("user input")
@@ -262,10 +277,36 @@ class InstallerTests(unittest.TestCase):
         self.cli("target", "remove", ALTERNATE)
         self.assertEqual(custom.read_text(), "user input")
         self.assertFalse((custom.parent / "scoop.window.slib").exists())
+        self.assertFalse((custom.parent / "profiling").exists())
         self.cli("component", "remove", "vendor")
         self.assertFalse((self.installed() / "vendor/upstream/source.c").exists())
         self.assertEqual(sum(path.endswith("sources.tar.xz") for path in self.requests), 1)
         self.cli("toolchain", "remove", "1.0.0", success=False)
+
+    def test_profiling_is_an_optional_target_component_and_reuses_download(self):
+        self.install()
+        self.cli("component", "add", "profiling", success=False)
+        self.cli("component", "add", "profiling", "--target", ALTERNATE, success=False)
+        self.assertFalse(any("profiling-" in path for path in self.requests))
+        library = self.installed() / "lib" / DEFAULT
+        self.cli("component", "add", "profiling", "--target", DEFAULT)
+        self.assertEqual(
+            (library / "profiling/release/scoop.core.slib").read_bytes(), b"release full"
+        )
+        self.assertTrue((library / "profiling/instrumented/scoop.core.slib.profile.json").is_file())
+        self.assertFalse((library / "scoop.window.slib").exists())
+        self.assertIn(
+            f"profiling --target {DEFAULT} (installed)",
+            self.cli("component", "list", "--installed").stdout,
+        )
+        requests = list(self.requests)
+        self.cli("component", "add", "profiling", "--target", DEFAULT)
+        self.assertEqual(self.requests, requests)
+        self.cli("component", "remove", "profiling", "--target", DEFAULT)
+        self.assertFalse((library / "profiling").exists())
+        self.assertEqual((library / "scoop.core.slib").read_bytes(), b"prebuilt base")
+        self.cli("component", "add", "profiling", "--target", DEFAULT)
+        self.assertEqual(self.requests, requests)
 
     def test_custom_home_proxies_work_without_an_environment_override(self):
         environment = dict(self.environment)
@@ -329,8 +370,12 @@ class InstallerTests(unittest.TestCase):
     def test_update_preserves_selection_and_rejects_unavailable_gui_before_downloading(
         self,
     ):
-        self.install("1.0.0", "--target", ALTERNATE, "--component", "gui,vendor")
+        self.install("1.0.0", "--target", ALTERNATE, "--component", "gui,profiling,vendor")
         self.release("2.0.0", gui=False)
+        self.cli("update", "--skip-docs", success=False)
+        self.assertEqual(self.default(), "1.0.0")
+        self.assertFalse(any(path.startswith("/2.0.0/") for path in self.requests))
+        self.release("2.0.0", profiling=False)
         self.cli("update", "--skip-docs", success=False)
         self.assertEqual(self.default(), "1.0.0")
         self.assertFalse(any(path.startswith("/2.0.0/") for path in self.requests))
@@ -339,6 +384,7 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(self.default(), "2.0.0")
         components = self.state("2.0.0")["components"]
         self.assertIn("gui-" + ALTERNATE, components)
+        self.assertIn("profiling-" + ALTERNATE, components)
         self.assertIn("vendor", components)
         self.assertNotIn("base-" + DEFAULT, components)
         self.cli("toolchain", "remove", "1.0.0")

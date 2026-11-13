@@ -256,6 +256,9 @@ impl Cli {
                     if let Some(gui) = &state.manifest.targets[target].gui {
                         names.push((format!("gui --target {target}"), gui.clone()));
                     }
+                    if let Some(profiling) = &state.manifest.targets[target].profiling {
+                        names.push((format!("profiling --target {target}"), profiling.clone()));
+                    }
                 }
                 for (name, component) in names {
                     let present = state.components.contains(&component);

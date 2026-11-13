@@ -31,6 +31,7 @@ Windows 三个 target 共用一个宿主 bin，宿主 triple 不替代默认 tar
 | `bin-<host>` | 必装，包含 Scoop 命令及其 LLVM／LLDB／Python 运行资源 |
 | `lib-base-<target>` | 每个所选 target 必装，包含预编译系统库、native 链接库及 runtime |
 | `lib-gui-<target>` | 按需，依赖同版本、同目标的 base；当前 musl 没有此组件 |
+| `lib-profiling-<target>` | 按需，manifest 的 target.profiling 指向归档；依赖同目标 base/native，包含两套 full 系统库、映射及采集 runtime，GUI native 资源仍由 gui 提供 |
 | `native-<target>` | 选择 MinGW target 时自动安装对应 SDK 数据 |
 | `sources` | 默认安装，保留内置 Cone 源码、清单、胶水、头文件和资源 |
 | `vendor` | 显式选择，上游源码和构建补丁 |
@@ -97,12 +98,16 @@ scoop-install target add x86_64-apple-darwin --toolchain 0.0.0-dev.20261111
 scoop-install target remove x86_64-apple-darwin --toolchain 0.0.0-dev.20261111
 scoop-install target list --installed
 scoop-install component add gui --target aarch64-apple-darwin
+scoop-install component add profiling --target aarch64-apple-darwin
+scoop-install component remove profiling --target aarch64-apple-darwin
 scoop-install component add vendor
 scoop-install component list --installed
 scoop-install show
 ```
 
 目标相关示例适用于 macOS 宿主。`gui` 的增删明确绑定 target；全局 sources／vendor 属于所选工具链。删除当前默认版本或删除其他已装组件必需的组件时，给出明确错误及需要先完成的选择操作，不留下无法解析的默认配置。
+
+`profiling` 同样明确绑定 target，缺省不安装；首次安装可用 `--component profiling` 为所选目标一起安装。组件文件位于 `lib/<target>/profiling/`，追加和移除不改变普通库与已生成文档。更新保留每个目标的 profiling 选择，新版没有对应组件时明确报错；移除 target 一并移除该组件。安装只使用预编译归档，不需要 Cargo/CMake 或构建系统库。
 
 default／run 和项目级版本选择采用以下优先级：
 
