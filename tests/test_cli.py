@@ -9,6 +9,7 @@ import subprocess
 import tarfile
 import tempfile
 import threading
+import time
 import tomllib
 import unittest
 from pathlib import Path
@@ -72,6 +73,8 @@ class InstallerTests(unittest.TestCase):
         self.site = self.root / "site"
         (self.site / "versions").mkdir(parents=True)
         self.requests = []
+        self.request_times = {}
+        self.responses = {}
         owner = self
 
         class Handler(http.server.SimpleHTTPRequestHandler):
@@ -80,6 +83,20 @@ class InstallerTests(unittest.TestCase):
 
             def do_GET(self):
                 owner.requests.append(self.path)
+                owner.request_times.setdefault(self.path, []).append(time.monotonic())
+                responses = owner.responses.get(self.path)
+                if responses:
+                    status, body, length = responses.pop(0)
+                    self.close_connection = True
+                    if status is not None:
+                        self.send_response(status)
+                        self.send_header(
+                            "Content-Length", str(len(body) if length is None else length)
+                        )
+                        self.send_header("Connection", "close")
+                        self.end_headers()
+                        self.wfile.write(body)
+                    return
                 super().do_GET()
 
             def log_message(self, *args):
@@ -94,6 +111,10 @@ class InstallerTests(unittest.TestCase):
             "SCOOP_HOME": str(self.home),
             "SCOOP_DIST_SERVER": f"http://127.0.0.1:{server.server_port}",
         }
+        # Fixture requests must reach the local server, independent of user proxies.
+        for name in list(self.environment):
+            if name.lower() in {"http_proxy", "https_proxy", "all_proxy", "no_proxy"}:
+                self.environment.pop(name)
         self.environment.pop("SCOOP_TOOLCHAIN", None)
         self.environment.pop("SCOOP_INSTALL_HOST", None)
         self.release("1.0.0")
@@ -206,6 +227,52 @@ class InstallerTests(unittest.TestCase):
 
     def install(self, version="1.0.0", *args):
         return self.cli("toolchain", "install", version, "--skip-docs", *args)
+
+    def terminal_install(self, version, term="xterm"):
+        import errno
+        import pty
+
+        master, slave = pty.openpty()
+        output = bytearray()
+
+        def read_terminal():
+            while True:
+                try:
+                    chunk = os.read(master, 65536)
+                except OSError as error:
+                    if error.errno == errno.EIO:
+                        break
+                    raise
+                if not chunk:
+                    break
+                output.extend(chunk)
+
+        reader = threading.Thread(target=read_terminal, daemon=True)
+        reader.start()
+        try:
+            result = subprocess.run(
+                [str(self.binary), "toolchain", "install", version, "--skip-docs"],
+                env={**self.environment, "TERM": term},
+                cwd=self.root,
+                stdout=subprocess.PIPE,
+                stderr=slave,
+                timeout=30,
+                check=False,
+            )
+        finally:
+            os.close(slave)
+            reader.join(timeout=5)
+            os.close(master)
+        self.assertFalse(reader.is_alive(), "Terminal reader did not finish")
+        self.assertEqual(result.returncode, 0, result.stdout + output)
+        return result.stdout, output.decode("utf-8")
+
+    def assert_download_cache_clean(self):
+        for path in (self.home / "downloads").iterdir():
+            if path.suffix != ".lock":
+                self.assertEqual(
+                    path.name, hashlib.sha256(path.read_bytes()).hexdigest() + ".tar.xz"
+                )
 
     def installed(self, version="1.0.0", host=HOST):
         return self.home / "toolchains" / f"{version}-{host}"
@@ -348,11 +415,164 @@ class InstallerTests(unittest.TestCase):
         self.install()
         damaged = self.site / "2.0.0/sources.tar.xz"
         damaged.write_bytes(b"incomplete download")
-        self.cli("update", "--skip-docs", success=False)
+        result = self.cli("update", "--skip-docs", success=False)
+        self.assertIn("failed after 4 attempts", result.stderr)
+        self.assertIn("Incomplete archive", result.stderr)
+        for delay in (1, 2, 4):
+            self.assertIn(f"retrying in {delay}s", result.stderr)
+        self.assertEqual(result.stderr.count("retrying in"), 3)
+        attempts = self.request_times["/2.0.0/sources.tar.xz"]
+        self.assertEqual(len(attempts), 4)
+        for earlier, later, delay in zip(attempts, attempts[1:], (1, 2, 4)):
+            self.assertGreaterEqual(later - earlier, delay - 0.05)
         self.assertEqual(self.default(), "1.0.0")
         self.assertFalse(self.installed("2.0.0").exists())
         self.assertEqual(self.proxy("--version").stdout.strip(), "1.0.0")
         self.assertEqual(list((self.home / "tmp").iterdir()), [])
+        self.assert_download_cache_clean()
+
+    def test_transient_http_errors_retry_latest_manifest_and_archive(self):
+        self.responses["/latest.toml"] = [(503, b"busy", None), (429, b"limited", None)]
+        self.responses["/versions/2.0.0.toml"] = [(408, b"timeout", None)]
+        self.responses["/2.0.0/bin.tar.xz"] = [(502, b"gateway", None)]
+        result = self.install("latest")
+        self.assertEqual(self.requests.count("/latest.toml"), 3)
+        self.assertEqual(self.requests.count("/versions/2.0.0.toml"), 2)
+        self.assertEqual(self.requests.count("/2.0.0/bin.tar.xz"), 2)
+        self.assertEqual(result.stderr.count("retrying in"), 4)
+        self.assertEqual(self.proxy("--version").stdout.strip(), "2.0.0")
+        self.assert_download_cache_clean()
+
+    def test_interrupted_responses_restart_manifest_and_archive_from_zero(self):
+        manifest = (self.site / "versions/1.0.0.toml").read_bytes()
+        archive = (self.site / "1.0.0/bin.tar.xz").read_bytes()
+        self.responses["/versions/1.0.0.toml"] = [
+            (200, manifest[: len(manifest) // 2], len(manifest))
+        ]
+        self.responses["/1.0.0/bin.tar.xz"] = [
+            (200, archive[: len(archive) // 3], len(archive)),
+            (200, archive[: len(archive) // 2], None),
+        ]
+        result = self.install()
+        self.assertEqual(self.requests.count("/versions/1.0.0.toml"), 2)
+        self.assertEqual(self.requests.count("/1.0.0/bin.tar.xz"), 3)
+        self.assertEqual(result.stderr.count("retrying in"), 3)
+        self.assertIn("Incomplete archive", result.stderr)
+        self.assertEqual(self.proxy("--version").stdout.strip(), "1.0.0")
+        self.assertEqual(
+            (
+                self.home / "downloads" / (hashlib.sha256(archive).hexdigest() + ".tar.xz")
+            ).read_bytes(),
+            archive,
+        )
+        self.assert_download_cache_clean()
+
+    def test_connection_closed_before_response_is_retried(self):
+        self.responses["/versions/1.0.0.toml"] = [(None, b"", None)]
+        result = self.install()
+        self.assertEqual(self.requests.count("/versions/1.0.0.toml"), 2)
+        self.assertIn("retrying in 1s", result.stderr)
+        self.assertEqual(self.proxy("--version").stdout.strip(), "1.0.0")
+
+    def test_permanent_http_errors_are_not_retried(self):
+        for path in ("/versions/1.0.0.toml", "/1.0.0/sources.tar.xz"):
+            for status in (403, 404):
+                with self.subTest(path=path, status=status):
+                    count = self.requests.count(path)
+                    self.responses[path] = [(status, b"unavailable", None)]
+                    result = self.cli("toolchain", "install", "1.0.0", "--skip-docs", success=False)
+                    self.assertEqual(self.requests.count(path), count + 1)
+                    self.assertIn(f"http status: {status}", result.stderr)
+                    self.assertNotIn("retrying", result.stderr)
+                    self.assertFalse(self.installed().exists())
+                    self.assertFalse((self.home / "settings.toml").exists())
+                    self.assert_download_cache_clean()
+
+    def test_checksum_failure_is_not_retried_or_cached(self):
+        path = self.site / "1.0.0/sources.tar.xz"
+        original = path.read_bytes()
+        path.write_bytes(bytes([original[0] ^ 1]) + original[1:])
+        result = self.cli("toolchain", "install", "1.0.0", "--skip-docs", success=False)
+        self.assertIn("SHA-256 mismatch", result.stderr)
+        self.assertNotIn("retrying", result.stderr)
+        self.assertEqual(self.requests.count("/1.0.0/sources.tar.xz"), 1)
+        self.assertFalse(self.installed().exists())
+        self.assertFalse((self.home / "settings.toml").exists())
+        self.assert_download_cache_clean()
+        path.write_bytes(original)
+        self.install()
+        self.assertEqual(self.requests.count("/1.0.0/sources.tar.xz"), 2)
+        self.assertEqual(self.requests.count("/1.0.0/bin.tar.xz"), 1)
+
+    def test_local_downloads_do_not_retry(self):
+        self.install("1.0.0", "--manifest", str(self.site / "versions/1.0.0.toml"))
+        (self.site / "2.0.0/sources.tar.xz").write_bytes(b"incomplete local archive")
+        result = self.cli(
+            "toolchain",
+            "install",
+            "2.0.0",
+            "--skip-docs",
+            "--manifest",
+            str(self.site / "versions/2.0.0.toml"),
+            success=False,
+        )
+        self.assertIn("Incomplete archive", result.stderr)
+        self.assertNotIn("retrying", result.stderr)
+        self.assertEqual(self.requests, [])
+        self.assertEqual(self.default(), "1.0.0")
+        self.assertFalse(self.installed("2.0.0").exists())
+        self.assert_download_cache_clean()
+
+    def test_cache_write_failure_does_not_retry_download(self):
+        manifest = tomllib.loads((self.site / "versions/1.0.0.toml").read_text())
+        archive = manifest["archives"]["base-" + DEFAULT]
+        blocked = self.home / "downloads" / (archive["sha256"] + ".tar.xz")
+        blocked.mkdir(parents=True)
+        result = self.cli("toolchain", "install", "1.0.0", "--skip-docs", success=False)
+        self.assertNotIn("retrying", result.stderr)
+        self.assertEqual(self.requests.count(f"/1.0.0/base-{DEFAULT}.tar.xz"), 1)
+        self.assertFalse(self.installed().exists())
+        self.assertFalse((self.home / "settings.toml").exists())
+        blocked.rmdir()
+        self.assert_download_cache_clean()
+
+    def test_redirected_output_has_plain_download_messages(self):
+        result = subprocess.run(
+            [str(self.binary), "toolchain", "install", "1.0.0", "--skip-docs"],
+            env={**self.environment, "TERM": "xterm"},
+            cwd=self.root,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(b"Downloading http://", result.stderr)
+        self.assertIn(b"Downloaded ", result.stderr)
+        self.assertNotIn(b"Downloading", result.stdout)
+        self.assertNotIn(b"\r", result.stderr)
+        self.assertNotIn(b"\x1b", result.stderr)
+        self.assertNotIn(b"%", result.stderr)
+
+    @unittest.skipIf(WINDOWS, "requires a Unix pseudo-terminal")
+    def test_terminal_progress_resets_on_retry_and_completes(self):
+        archive = (self.site / "1.0.0/bin.tar.xz").read_bytes()
+        self.responses["/1.0.0/bin.tar.xz"] = [(200, archive[: len(archive) // 2], len(archive))]
+        stdout, stderr = self.terminal_install("1.0.0")
+        self.assertIn("\r  [                    ]   0%", stderr)
+        self.assertIn("[====================] 100%", stderr)
+        self.assertRegex(stderr, r"\d+\.\d+ (?:B|KiB|MiB)/s")
+        self.assertNotIn(b"%", stdout)
+        before_retry, after_retry = stderr.split("retrying in 1s", 1)
+        self.assertNotIn("100%", before_retry.split("/1.0.0/bin.tar.xz (", 1)[1])
+        self.assertRegex(after_retry, r"^\r?\n\r  \[ {20}\]   0%")
+        self.assertIn("[====================] 100%", after_retry)
+        self.assertEqual(self.requests.count("/1.0.0/bin.tar.xz"), 2)
+
+    @unittest.skipIf(WINDOWS, "requires a Unix pseudo-terminal")
+    def test_dumb_terminal_uses_plain_download_messages(self):
+        _, stderr = self.terminal_install("1.0.0", term="dumb")
+        self.assertIn("Downloaded ", stderr)
+        self.assertNotIn("%", stderr)
+        self.assertNotIn("\x1b", stderr)
 
     def test_bad_archive_paths_and_component_overlap_do_not_activate(self):
         for name in ("../outside.txt", "VERSION"):

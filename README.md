@@ -38,6 +38,10 @@ targets = ["aarch64-apple-darwin"]
 
 首次安装可用 `--skip-docs` 跳过 API 文档，后续用 `scoop-install docs --toolchain <version>` 重试。文档失败保留已装工具链并显示重试命令；下载、摘要检查或解包失败不会激活不完整工具链。更新一次准备所选 targets、GUI 和 vendor，成功后切换 default，保留旧版本供显式删除。
 
+HTTP(S) 索引和组件归档下载遇到网络错误、超时、HTTP 408／429／5xx 或归档不完整时，最多尝试 4 次，重试前依次等待 1、2、4 秒。每次重试从头下载，失败的临时文件会清理；404 等永久错误、本地文件错误及 SHA-256 校验失败直接报错。连接和单次网络读取的超时为 30 秒。
+
+组件下载在交互终端的标准错误输出显示进度条、已下载／总大小和平均速度，重试时重置进度。输出重定向或 `TERM=dumb` 时使用普通文本日志。
+
 `--home`／`SCOOP_HOME` 选择管理目录；`--dist-server`／`SCOOP_DIST_SERVER` 选择镜像（默认 `https://release.scoop-lang.org`）。`toolchain install <version> --manifest <path-or-url>` 消费本地或 HTTP(S) 索引，便于发行验收。独立安装的版本存放在 `toolchains/<version>-<host>`；已有的 `packages/`、`commands/` 和其他用户文件保留。
 
 构建需要 Rust 1.89+ 和 C 编译器，XZ 静态链接。CLI 测试需要 Python 3.11+；测试使用本地 HTTP 服务与真实子进程，不请求线上发行。
