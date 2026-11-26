@@ -10,6 +10,8 @@ Scoop 工具链、target 与可选组件的独立安装和版本管理程序。�
 
 [SHA256SUMS](https://release.scoop-lang.org/installers/0.1.0/SHA256SUMS) 提供校验值。将文件命名为 `scoop-install`（Windows 为 `scoop-install.exe`），macOS／Linux 执行 `chmod +x scoop-install`。第一次可用 `./scoop-install toolchain install latest` 安装；之后将管理目录的 `bin` 加入 PATH。安装器版本与 Scoop 工具链版本独立管理。
 
+ARM64 GNU/Linux 可从源码执行 `cargo build --release --locked` 构建安装器。该宿主默认选择 `aarch64-unknown-linux-gnu`，可用 `scoop-install target add aarch64-unknown-linux-musl` 追加 musl 基础库。
+
 以下目标选择示例适用于 macOS：
 
 ```sh

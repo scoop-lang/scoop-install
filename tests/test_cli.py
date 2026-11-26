@@ -25,7 +25,7 @@ HOST = (
     if platform.system() == "Darwin" and platform.machine() == "arm64"
     else "x86_64-apple-darwin"
     if platform.system() == "Darwin"
-    else "x86_64-unknown-linux-gnu"
+    else f"{platform.machine()}-unknown-linux-gnu"
 )
 DEFAULT = "x86_64-pc-windows-msvc-ucrt" if WINDOWS else HOST
 ALTERNATE = (
@@ -33,7 +33,7 @@ ALTERNATE = (
     if WINDOWS
     else "x86_64-apple-darwin"
     if "darwin" in HOST
-    else "x86_64-unknown-linux-musl"
+    else HOST.removesuffix("-gnu") + "-musl"
 )
 MINGW = "x86_64-w64-windows-llvm-mingw-msvcrt"
 

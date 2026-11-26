@@ -19,6 +19,9 @@ jobs:
           - runner: ubuntu-24.04
             host: x86_64-unknown-linux-gnu
             suffix: ''
+          - runner: ubuntu-24.04-arm
+            host: aarch64-unknown-linux-gnu
+            suffix: ''
           - runner: windows-2025
             host: x86_64-pc-windows-gnullvm
             suffix: '.exe'

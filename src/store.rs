@@ -27,6 +27,7 @@ pub fn host() -> Result<String> {
         ("macos", "x86_64") => "x86_64-apple-darwin",
         ("linux", "x86_64") if cfg!(target_env = "musl") => "x86_64-unknown-linux-musl",
         ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
+        ("linux", "aarch64") if cfg!(target_env = "gnu") => "aarch64-unknown-linux-gnu",
         ("windows", "x86_64") => "x86_64-pc-windows-gnullvm",
         (os, arch) => anyhow::bail!("No Scoop host is defined for {arch}-{os}"),
     };

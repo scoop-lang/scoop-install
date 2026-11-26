@@ -22,6 +22,7 @@
 | --- | --- | --- |
 | `aarch64-apple-darwin` | `aarch64-apple-darwin` | `x86_64-apple-darwin` |
 | `x86_64-unknown-linux-gnu` | `x86_64-unknown-linux-gnu` | `x86_64-unknown-linux-musl` |
+| `aarch64-unknown-linux-gnu` | `aarch64-unknown-linux-gnu` | `aarch64-unknown-linux-musl` |
 | `x86_64-pc-windows-gnullvm` | `x86_64-pc-windows-msvc-ucrt` | `x86_64-w64-windows-llvm-mingw-ucrt`、`x86_64-w64-windows-llvm-mingw-msvcrt` |
 
 Windows 三个 target 共用一个宿主 bin，宿主 triple 不替代默认 target。安装 target 后仍用 `scoop build --target <target>` 选择编译目标；安装操作不改变编译器的默认目标。
